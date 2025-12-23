@@ -4,8 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Xmas Luxury - Interactive Gallery</title>
+    <link rel="stylesheet" href="style.css">
     <style>
-        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Times New Roman', serif; }
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Times New Roman', serif; touch-action: none;}
         #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; }
         
         #ui-layer {
@@ -46,7 +47,7 @@
     </script>
 </head>
 <body>
-
+<div id="falling-container" class="fixed inset-0 pointer-events-none"></div>
 <div id="loader">
     <div class="spinner"></div>
     <div style="color:#d4af37; margin-top:15px; letter-spacing:3px;">ĐANG TẢI...</div>
@@ -56,9 +57,9 @@
 
 <div id="ui-layer">
     <h1>MERRY CHRISTMAS</h1>
-    <div class="hint-wrapper">
+    <!-- <div class="hint-wrapper">
         <div class="hint-text">Click vào ảnh để xem | Click nền để tụ cây | Giữ chuột để xoay</div>
-    </div>
+    </div> -->
 </div>
 
 <script type="module">
@@ -194,38 +195,57 @@
     }
 
     function setupEvents() {
-        window.addEventListener('mousedown', e => { isDragging = true; prevMouse = {x: e.clientX, y: e.clientY}; });
-        window.addEventListener('mouseup', () => isDragging = false);
-        window.addEventListener('mousemove', e => {
-            mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
-            mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
-            if(isDragging) {
-                state.rotation.y += (e.clientX - prevMouse.x) * 0.005;
-                state.rotation.x += (e.clientY - prevMouse.y) * 0.005;
-                prevMouse = {x: e.clientX, y: e.clientY};
+        // Hàm lấy tọa độ chung cho cả Chuột và Cảm ứng
+        const getPos = (e) => {
+            if (e.touches && e.touches.length > 0) {
+                return { x: e.touches[0].clientX, y: e.touches[0].clientY };
             }
-        });
+            return { x: e.clientX, y: e.clientY };
+        };
 
-        window.addEventListener('click', e => {
-            if(isDragging && Math.abs(e.clientX - prevMouse.x) > 5) return;
-            raycaster.setFromCamera(mouse, camera);
-            const hits = raycaster.intersectObjects(photoGroup.children, true);
+        const onStart = (e) => {
+            isDragging = true;
+            mouseDownTime = Date.now();
+            const pos = getPos(e);
+            startPos = { x: pos.x, y: pos.y };
+        };
 
-            if(hits.length > 0) {
-                let obj = hits[0].object;
-                while(obj.parent !== photoGroup) obj = obj.parent;
-                
-                if(state.focusTarget === obj) {
-                    state.focusTarget = null;
-                    state.mode = 'TREE'; // Thu cây lại
-                } else {
-                    state.focusTarget = obj;
-                    state.mode = 'SCATTER'; // "NỔ" cây khi xem ảnh
-                }
-            } else {
-                state.mode = (state.mode === 'SCATTER') ? 'TREE' : 'SCATTER';
-                state.focusTarget = null;
+        const onMove = (e) => {
+            const pos = getPos(e);
+            // Cập nhật tọa độ raycaster để biết chuột/tay đang ở đâu
+            mouse.x = (pos.x / window.innerWidth) * 2 - 1;
+            mouse.y = -(pos.y / window.innerHeight) * 2 + 1;
+
+            if (isDragging) {
+                state.rotation.y += (pos.x - startPos.x) * 0.008; // Độ nhạy xoay
+                state.rotation.x += (pos.y - startPos.y) * 0.008;
+                startPos = { x: pos.x, y: pos.y };
             }
+        };
+
+        const onEnd = (e) => {
+            const duration = Date.now() - mouseDownTime;
+            // Kiểm tra nếu người dùng chỉ chạm nhẹ (không phải kéo)
+            if (duration < 250) {
+                handleInteraction(e);
+            }
+            isDragging = false;
+        };
+
+        // Sự kiện Máy tính
+        window.addEventListener('mousedown', onStart);
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onEnd);
+
+        // Sự kiện Điện thoại
+        window.addEventListener('touchstart', onStart, { passive: false });
+        window.addEventListener('touchmove', onMove, { passive: false });
+        window.addEventListener('touchend', onEnd, { passive: false });
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
         });
     }
 
