@@ -2,34 +2,23 @@
 <html lang="VN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Xmas Luxury - Interactive Gallery</title>
-    <link rel="stylesheet" href="style.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Xmas Luxury - Quick View</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Times New Roman', serif; touch-action: none;}
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Times New Roman', serif; touch-action: none; }
         #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; }
-        
         #ui-layer {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             z-index: 10; pointer-events: none;
             display: flex; flex-direction: column; align-items: center; padding-top: 40px; box-sizing: border-box;
         }
-
         h1 { 
-            color: #fceea7; font-size: 50px; margin: 0; font-weight: 400; letter-spacing: 8px; 
+            color: #fceea7; font-size: 40px; margin: 0; font-weight: 400; letter-spacing: 6px; 
             text-shadow: 0 0 30px rgba(252, 238, 167, 0.8);
             background: linear-gradient(to bottom, #fff, #d4af37);
             -webkit-background-clip: text; -webkit-text-fill-color: transparent;
             font-family: 'Cinzel', serif;
         }
-
-        .hint-wrapper { margin-top: 20px; pointer-events: auto; text-align: center; }
-        .hint-text { 
-            color: #d4af37; font-size: 11px; letter-spacing: 2px; text-transform: uppercase;
-            background: rgba(0,0,0,0.4); padding: 8px 20px; border: 1px solid rgba(212, 175, 55, 0.3);
-            backdrop-filter: blur(5px);
-        }
-
         #loader {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #000; z-index: 100;
             display: flex; flex-direction: column; align-items: center; justify-content: center; transition: 0.8s;
@@ -47,7 +36,7 @@
     </script>
 </head>
 <body>
-<div id="falling-container" class="fixed inset-0 pointer-events-none"></div>
+
 <div id="loader">
     <div class="spinner"></div>
     <div style="color:#d4af37; margin-top:15px; letter-spacing:3px;">ĐANG TẢI...</div>
@@ -57,9 +46,6 @@
 
 <div id="ui-layer">
     <h1>MERRY CHRISTMAS</h1>
-    <!-- <div class="hint-wrapper">
-        <div class="hint-text">Click vào ảnh để xem | Click nền để tụ cây | Giữ chuột để xoay</div>
-    </div> -->
 </div>
 
 <script type="module">
@@ -76,13 +62,16 @@
         accentColor: 0xff3300
     };
 
-    // Đã bỏ phần upload - Chỉ dùng ảnh trong folder images
     const LOCAL_IMAGES = ['images/1.jpg', 'images/2.jpg', 'images/3.jpg', 'images/4.jpg', 'images/5.jpg', 'images/6.jpg', 'images/7.jpg'];
 
     let scene, camera, renderer, composer, mainGroup, photoGroup;
     let particles = [], clock = new THREE.Clock();
-    let raycaster = new THREE.Raycaster(), mouse = new THREE.Vector2();
-    let isDragging = false, prevMouse = {x:0, y:0};
+    let raycaster = new THREE.Raycaster();
+    let mouse = new THREE.Vector2();
+    
+    let isDragging = false;
+    let mouseDownTime = 0;
+    let startPos = { x: 0, y: 0 };
     let state = { mode: 'TREE', focusTarget: null, rotation: {x:0, y:0} };
 
     function init() {
@@ -90,7 +79,7 @@
         camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.1, 1000);
         camera.position.set(0, 2, 60);
 
-        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         renderer.toneMapping = THREE.ReinhardToneMapping;
@@ -108,8 +97,11 @@
         loadPhotos();
 
         setTimeout(() => {
-            document.getElementById('loader').style.opacity = 0;
-            setTimeout(() => document.getElementById('loader').remove(), 800);
+            const loader = document.getElementById('loader');
+            if(loader) {
+                loader.style.opacity = 0;
+                setTimeout(() => loader.remove(), 800);
+            }
         }, 1500);
 
         animate();
@@ -117,9 +109,7 @@
 
     function createLuxuryParticles() {
         const geometries = [new THREE.SphereGeometry(0.12, 8, 8), new THREE.OctahedronGeometry(0.2)];
-        const goldMat = new THREE.MeshStandardMaterial({ 
-            color: CONFIG.glowColor, emissive: CONFIG.glowColor, emissiveIntensity: 1.5, metalness: 1, roughness: 0 
-        });
+        const goldMat = new THREE.MeshStandardMaterial({ color: CONFIG.glowColor, emissive: CONFIG.glowColor, emissiveIntensity: 1.5, metalness: 1, roughness: 0 });
         const redMat = new THREE.MeshStandardMaterial({ color: CONFIG.accentColor, emissive: CONFIG.accentColor, emissiveIntensity: 1 });
 
         for (let i = 0; i < CONFIG.particleCount; i++) {
@@ -128,6 +118,7 @@
                 mesh: mesh,
                 posScatter: new THREE.Vector3((Math.random()-0.5)*120, (Math.random()-0.5)*120, (Math.random()-0.5)*120),
                 posTree: calculateTreePos(),
+                isPhoto: false
             };
             mainGroup.add(mesh);
             particles.push(p);
@@ -152,20 +143,21 @@
         LOCAL_IMAGES.forEach(url => {
             loader.load(url, tex => {
                 tex.colorSpace = THREE.SRGBColorSpace;
-                
-                // TÍNH TOÁN ASPECT RATIO ĐỂ KHÔNG BỊ MÉO
+                tex.minFilter = THREE.LinearFilter;
+                tex.magFilter = THREE.LinearFilter;
+
                 const aspect = tex.image.width / tex.image.height;
-                const baseHeight = 1.8;
+                
+                // --- KÍCH THƯỚC BAN ĐẦU CỦA ẢNH ---
+                const baseHeight = 4.0; 
                 const baseWidth = baseHeight * aspect;
 
                 const g = new THREE.Group();
-                // Khung ảnh màu vàng champagne
                 const frame = new THREE.Mesh(
                     new THREE.BoxGeometry(baseWidth + 0.15, baseHeight + 0.15, 0.08), 
                     new THREE.MeshStandardMaterial({color:0xd4af37, metalness:0.8, roughness:0.2})
                 );
                 
-                // Ảnh sử dụng vật liệu Basic để tránh bị Bloom quá mức làm cháy màu
                 const pic = new THREE.Mesh(
                     new THREE.PlaneGeometry(baseWidth, baseHeight), 
                     new THREE.MeshBasicMaterial({map:tex, side: THREE.DoubleSide})
@@ -187,19 +179,45 @@
 
     function setupPostProcessing() {
         const renderPass = new RenderPass(scene, camera);
-        // Ngưỡng Threshold cao (0.8) để chỉ những hạt phát sáng mới Bloom, còn ảnh thì không
-        const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.2, 0.4, 0.8);
+        const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.0, 0.4, 0.85);
         composer = new EffectComposer(renderer);
         composer.addPass(renderPass);
         composer.addPass(bloomPass);
     }
 
-    function setupEvents() {
-        // Hàm lấy tọa độ chung cho cả Chuột và Cảm ứng
-        const getPos = (e) => {
-            if (e.touches && e.touches.length > 0) {
-                return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    // --- LOGIC CLICK HIỆN ẢNH (ĐÃ CẬP NHẬT) ---
+    function handleInteraction() {
+        raycaster.setFromCamera(mouse, camera);
+        const hits = raycaster.intersectObjects(photoGroup.children, true);
+
+        if (hits.length > 0) {
+            // Nếu click trúng ảnh -> Hiện ảnh ra trước
+            let obj = hits[0].object;
+            while(obj.parent !== photoGroup) obj = obj.parent;
+            
+            if (state.focusTarget === obj) {
+                // Nếu đang xem ảnh này mà click tiếp thì tắt nó đi
+                state.focusTarget = null;
+                state.mode = 'TREE';
+            } else {
+                // Hiện ảnh mới
+                state.focusTarget = obj;
+                state.mode = 'SCATTER';
             }
+        } else {
+            // Click ra ngoài -> Đổi trạng thái hoặc tắt ảnh đang xem
+            if (state.focusTarget) {
+                state.focusTarget = null;
+                state.mode = 'TREE';
+            } else {
+                state.mode = (state.mode === 'SCATTER') ? 'TREE' : 'SCATTER';
+            }
+        }
+    }
+
+    function setupEvents() {
+        const getPos = (e) => {
+            if (e.touches && e.touches.length > 0) return { x: e.touches[0].clientX, y: e.touches[0].clientY };
             return { x: e.clientX, y: e.clientY };
         };
 
@@ -208,36 +226,32 @@
             mouseDownTime = Date.now();
             const pos = getPos(e);
             startPos = { x: pos.x, y: pos.y };
+            mouse.x = (pos.x / window.innerWidth) * 2 - 1;
+            mouse.y = -(pos.y / window.innerHeight) * 2 + 1;
         };
 
         const onMove = (e) => {
             const pos = getPos(e);
-            // Cập nhật tọa độ raycaster để biết chuột/tay đang ở đâu
             mouse.x = (pos.x / window.innerWidth) * 2 - 1;
             mouse.y = -(pos.y / window.innerHeight) * 2 + 1;
 
             if (isDragging) {
-                state.rotation.y += (pos.x - startPos.x) * 0.008; // Độ nhạy xoay
+                state.rotation.y += (pos.x - startPos.x) * 0.008;
                 state.rotation.x += (pos.y - startPos.y) * 0.008;
                 startPos = { x: pos.x, y: pos.y };
             }
         };
 
-        const onEnd = (e) => {
+        const onEnd = () => {
             const duration = Date.now() - mouseDownTime;
-            // Kiểm tra nếu người dùng chỉ chạm nhẹ (không phải kéo)
-            if (duration < 250) {
-                handleInteraction(e);
-            }
+            // Nếu click nhanh (< 250ms) thì mới xử lý hiện ảnh
+            if (duration < 250) handleInteraction();
             isDragging = false;
         };
 
-        // Sự kiện Máy tính
         window.addEventListener('mousedown', onStart);
         window.addEventListener('mousemove', onMove);
         window.addEventListener('mouseup', onEnd);
-
-        // Sự kiện Điện thoại
         window.addEventListener('touchstart', onStart, { passive: false });
         window.addEventListener('touchmove', onMove, { passive: false });
         window.addEventListener('touchend', onEnd, { passive: false });
@@ -246,6 +260,7 @@
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
         });
     }
 
@@ -261,11 +276,13 @@
         particles.forEach(p => {
             let target;
             if (state.focusTarget && p.mesh === state.focusTarget) {
-                // Đưa ảnh ra trước mặt camera, khoảng cách 20 đơn vị
-                const forward = new THREE.Vector3(0, 0, 20).applyQuaternion(camera.quaternion);
+                // --- VỊ TRÍ VÀ KÍCH THƯỚC KHI HIỆN RA TRƯỚC ---
+                const forward = new THREE.Vector3(0, 0, 22).applyQuaternion(camera.quaternion);
                 target = new THREE.Vector3().copy(camera.position).sub(forward);
                 p.mesh.lookAt(camera.position);
-                p.mesh.scale.lerp(new THREE.Vector3(4, 4, 4), 6 * dt);
+                
+                // Số 3.5 là kích thước phóng to.
+                p.mesh.scale.lerp(new THREE.Vector3(3.5, 3.5, 3.5), 6 * dt);
             } else {
                 target = (state.mode === 'TREE') ? p.posTree : p.posScatter;
                 p.mesh.scale.lerp(new THREE.Vector3(1, 1, 1), 5 * dt);
@@ -275,12 +292,8 @@
                 }
             }
             p.mesh.position.lerp(target, 2.5 * dt);
-            
-            if(!p.isPhoto) {
-                p.mesh.material.emissiveIntensity = 1 + Math.sin(elapsed * 4 + p.mesh.id) * 0.6;
-            }
+            if(!p.isPhoto) p.mesh.material.emissiveIntensity = 1 + Math.sin(elapsed * 4 + p.mesh.id) * 0.6;
         });
-
         composer.render();
     }
 
